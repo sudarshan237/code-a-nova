@@ -1,6 +1,25 @@
 import React, { useState, useEffect } from 'react';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:5000/api').replace(/\/+$/, '');
+
+// Safe fetch wrapper to prevent SyntaxError on HTML responses
+async function safeFetch(url, options = {}) {
+  try {
+    const res = await fetch(url, options);
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || `Request failed (${res.status})`);
+      return data;
+    }
+    const text = await res.text();
+    if (res.status === 404) throw new Error(`API route not found (404). Check backend URL: ${url}`);
+    if (res.status === 502 || res.status === 503) throw new Error('Backend server is waking up from sleep. Please retry in 30 seconds.');
+    throw new Error(`Server returned HTML instead of JSON (${res.status}). Verify VITE_API_URL on Vercel.`);
+  } catch (err) {
+    throw err;
+  }
+}
 
 export default function App() {
   const [user, setUser] = useState(() => JSON.parse(localStorage.getItem('nova_user') || 'null'));
@@ -8,14 +27,10 @@ export default function App() {
   const [page, setPage] = useState('home');
   const [msg, setMsg] = useState({ type: '', text: '' });
 
-  // Signup state
   const [signupData, setSignupData] = useState({ fullName: '', email: '', password: '', confirmPassword: '' });
-  // OTP state
   const [otpEmail, setOtpEmail] = useState('');
   const [otpVal, setOtpVal] = useState('');
-  // Login state
   const [loginData, setLoginData] = useState({ email: '', password: '' });
-  // Registration state
   const [regData, setRegData] = useState({
     mobileNumber: '', college: '', course: '', branch: '', yearOfStudy: '3rd Year',
     domain: 'AI & Machine Learning', projectName: '', pptUrl: '', prototypeUrl: '', demoVideoUrl: '', teamSize: 1
@@ -25,42 +40,39 @@ export default function App() {
 
   useEffect(() => {
     if (token) {
-      fetch(`${API_BASE}/hackathon/my-entry`, { headers: { Authorization: `Bearer ${token}` } })
-        .then(res => res.json())
-        .then(data => { if (data.success && data.data) setMyEntry(data.data); })
-        .catch(() => {});
+      safeFetch(`${API_BASE}/hackathon/my-entry`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(data => { if (data?.success && data?.data) setMyEntry(data.data); })
+        .catch(err => console.log('My Entry fetch notice:', err.message));
     }
   }, [token]);
 
   const handleSignup = async (e) => {
     e.preventDefault();
+    setMsg({ type: '', text: '' });
     if (signupData.password !== signupData.confirmPassword) {
       return setMsg({ type: 'err', text: 'Passwords do not match' });
     }
     try {
-      const res = await fetch(`${API_BASE}/auth/signup`, {
+      const data = await safeFetch(`${API_BASE}/auth/signup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(signupData)
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Signup failed');
       setOtpEmail(signupData.email);
-      setMsg({ type: 'ok', text: 'OTP sent to your email!' });
+      setMsg({ type: 'ok', text: data.message || 'OTP sent to your email!' });
       setPage('otp');
     } catch (err) { setMsg({ type: 'err', text: err.message }); }
   };
 
   const handleVerifyOtp = async (e) => {
     e.preventDefault();
+    setMsg({ type: '', text: '' });
     try {
-      const res = await fetch(`${API_BASE}/auth/verify-otp`, {
+      const data = await safeFetch(`${API_BASE}/auth/verify-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: otpEmail, otp: otpVal })
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Verification failed');
       localStorage.setItem('nova_token', data.token);
       localStorage.setItem('nova_user', JSON.stringify(data.user));
       setToken(data.token);
@@ -72,14 +84,13 @@ export default function App() {
 
   const handleLogin = async (e) => {
     e.preventDefault();
+    setMsg({ type: '', text: '' });
     try {
-      const res = await fetch(`${API_BASE}/auth/login`, {
+      const data = await safeFetch(`${API_BASE}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(loginData)
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Login failed');
       localStorage.setItem('nova_token', data.token);
       localStorage.setItem('nova_user', JSON.stringify(data.user));
       setToken(data.token);
@@ -99,15 +110,14 @@ export default function App() {
 
   const handleHackathonRegister = async (e) => {
     e.preventDefault();
+    setMsg({ type: '', text: '' });
     try {
       const payload = { ...regData, leaderName: user.fullName, leaderEmail: user.email, teamMembers };
-      const res = await fetch(`${API_BASE}/hackathon/register`, {
+      const data = await safeFetch(`${API_BASE}/hackathon/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(payload)
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Registration failed');
       setMyEntry(data.data);
       setMsg({ type: 'ok', text: 'Registered for Code-a-Nova Hackathon!' });
       setPage('dashboard');
